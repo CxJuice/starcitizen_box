@@ -20,6 +20,8 @@ class SplashUI extends HookConsumerWidget {
   const SplashUI({super.key});
 
   static const _alertInfoVersion = 1;
+  static const _freeSoftwareNoticeAcceptedKey =
+      "splash_free_software_notice_accepted";
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -50,7 +52,8 @@ class SplashUI extends HookConsumerWidget {
                       final lastClick = lastClickTime.value;
 
                       // 重置计数器如果距离上次点击超过2秒
-                      if (lastClick != null && now.difference(lastClick).inSeconds > 2) {
+                      if (lastClick != null &&
+                          now.difference(lastClick).inSeconds > 2) {
                         clickCount.value = 0;
                       }
 
@@ -62,13 +65,19 @@ class SplashUI extends HookConsumerWidget {
                         clickCount.value = 0;
                       }
                     },
-                    child: Image.asset("assets/app_logo.png", width: 192, height: 192),
+                    child: Image.asset(
+                      "assets/app_logo.png",
+                      width: 192,
+                      height: 192,
+                    ),
                   ),
                   const SizedBox(height: 32),
                   const ProgressRing(),
                   const SizedBox(height: 32),
-                  if (step == 0) Text(S.current.app_splash_checking_availability),
-                  if (step == 1) Text(S.current.app_splash_checking_for_updates),
+                  if (step == 0)
+                    Text(S.current.app_splash_checking_availability),
+                  if (step == 1)
+                    Text(S.current.app_splash_checking_for_updates),
                   if (step == 2) Text(S.current.app_splash_almost_done),
                 ],
               ),
@@ -78,16 +87,30 @@ class SplashUI extends HookConsumerWidget {
         alignment: AlignmentDirectional.centerStart,
         child: Row(
           children: [
-            Image.asset("assets/app_logo_mini.png", width: 20, height: 20, fit: BoxFit.cover),
+            Image.asset(
+              "assets/app_logo_mini.png",
+              width: 20,
+              height: 20,
+              fit: BoxFit.cover,
+            ),
             const SizedBox(width: 12),
-            Text(S.current.app_index_version_info(ConstConf.appVersion, ConstConf.isMSE ? "" : " Dev")),
+            Text(
+              S.current.app_index_version_info(
+                ConstConf.appVersion,
+                ConstConf.isMSE ? "" : " Dev",
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildDiagnosticView(ValueNotifier<List<String>> diagnosticLogs, int currentStep, BuildContext context) {
+  Widget _buildDiagnosticView(
+    ValueNotifier<List<String>> diagnosticLogs,
+    int currentStep,
+    BuildContext context,
+  ) {
     return Container(
       padding: const EdgeInsets.all(24),
       constraints: const BoxConstraints(maxWidth: 800, maxHeight: 600),
@@ -97,18 +120,33 @@ class SplashUI extends HookConsumerWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('诊断模式 - Step $currentStep', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              Text(
+                S.current.splash_diagnostic_mode(currentStep),
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               Row(
                 children: [
-                  Button(onPressed: () => _loadDPrintLog(diagnosticLogs), child: Text(S.current.splash_read_full_log)),
+                  Button(
+                    onPressed: () => _loadDPrintLog(diagnosticLogs),
+                    child: Text(S.current.splash_read_full_log),
+                  ),
                   const SizedBox(width: 8),
-                  Button(onPressed: () => _resetHiveDatabase(context), child: Text(S.current.splash_reset_database)),
+                  Button(
+                    onPressed: () => _resetHiveDatabase(context),
+                    child: Text(S.current.splash_reset_database),
+                  ),
                 ],
               ),
             ],
           ),
           const SizedBox(height: 16),
-          Text(S.current.splash_init_task_status, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          Text(
+            S.current.splash_init_task_status,
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
           const SizedBox(height: 12),
           Expanded(
             child: ValueListenableBuilder<List<String>>(
@@ -141,7 +179,11 @@ class SplashUI extends HookConsumerWidget {
                               padding: const EdgeInsets.symmetric(vertical: 2),
                               child: Text(
                                 log,
-                                style: TextStyle(fontFamily: 'Consolas', fontSize: 12, color: textColor),
+                                style: TextStyle(
+                                  fontFamily: 'Consolas',
+                                  fontSize: 12,
+                                  color: textColor,
+                                ),
                               ),
                             );
                           },
@@ -163,12 +205,13 @@ class SplashUI extends HookConsumerWidget {
     ValueNotifier<List<String>> diagnosticLogs,
   ) async {
     void addLog(String message) {
-      final logMessage = '[${DateTime.now().toString().substring(11, 23)}] $message';
+      final logMessage =
+          '[${DateTime.now().toString().substring(11, 23)}] $message';
       diagnosticLogs.value = [...diagnosticLogs.value, logMessage];
-      dPrint("[诊断] $message");
+      dPrint(S.current.splash_diagnostic_log(message));
     }
 
-    addLog('[${DateTime.now().toIso8601String()}] 开始初始化...');
+    addLog(S.current.splash_start_init(DateTime.now().toIso8601String()));
 
     // Step 0: initApp with timeout
     addLog(S.current.splash_exec_app_init);
@@ -182,7 +225,7 @@ class SplashUI extends HookConsumerWidget {
       );
       addLog(S.current.splash_app_init_done);
     } catch (e) {
-      addLog('✗ appModel.initApp() 错误: $e');
+      addLog(S.current.splash_app_init_error(e));
       rethrow;
     }
 
@@ -199,7 +242,7 @@ class SplashUI extends HookConsumerWidget {
       );
       addLog(S.current.splash_hive_done);
     } catch (e) {
-      addLog('✗ Hive.openBox("app_conf") 错误: $e');
+      addLog(S.current.splash_hive_error(e));
       rethrow;
     }
 
@@ -220,7 +263,18 @@ class SplashUI extends HookConsumerWidget {
       );
       addLog(S.current.splash_analytics_done);
     } catch (e) {
-      addLog('⚠ AnalyticsApi.touch("launch") 错误: $e - 继续执行');
+      addLog(S.current.splash_analytics_error(e));
+    }
+
+    if (appConf.get(_freeSoftwareNoticeAcceptedKey, defaultValue: false) !=
+        true) {
+      addLog(S.current.splash_show_free_software_notice);
+      if (!context.mounted) {
+        addLog(S.current.splash_context_unmounted_dialog);
+        return;
+      }
+      await _showFreeSoftwareNotice(context, appConf);
+      addLog(S.current.splash_free_software_notice_handled);
     }
 
     // Show alert if needed
@@ -247,7 +301,7 @@ class SplashUI extends HookConsumerWidget {
       );
       addLog(S.current.splash_check_host_done);
     } catch (e) {
-      addLog('⚠ URLConf.checkHost() 错误: $e - 继续执行');
+      addLog(S.current.splash_check_host_error(e));
       dPrint("checkHost Error:$e");
     }
 
@@ -273,7 +327,7 @@ class SplashUI extends HookConsumerWidget {
           );
       addLog(S.current.splash_check_update_done);
     } catch (e) {
-      addLog('⚠ appModel.checkUpdate() 错误: $e - 继续执行');
+      addLog(S.current.splash_check_update_error(e));
     }
 
     addLog(S.current.splash_step1_done);
@@ -286,7 +340,7 @@ class SplashUI extends HookConsumerWidget {
       ref.read(downloadManagerProvider);
       addLog(S.current.splash_aria2c_done);
     } catch (e) {
-      addLog('⚠ downloadManagerProvider 初始化错误: $e');
+      addLog(S.current.splash_aria2c_error(e));
     }
 
     if (!context.mounted) {
@@ -308,10 +362,31 @@ class SplashUI extends HookConsumerWidget {
       context,
       S.current.app_splash_dialog_u_a_p_p,
       MarkdownWidget(data: S.current.app_splash_dialog_u_a_p_p_content),
-      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * .5),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * .5,
+      ),
     );
     if (userOk) {
       await appConf.put("splash_alert_info_version", _alertInfoVersion);
+    } else {
+      exit(0);
+    }
+  }
+
+  Future<void> _showFreeSoftwareNotice(
+    BuildContext context,
+    Box<dynamic> appConf,
+  ) async {
+    final userOk = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      dismissWithEsc: false,
+      builder: (context) => _FreeSoftwareNoticeDialog(
+        confirmText: S.current.app_splash_free_software_notice_confirm_text,
+      ),
+    );
+    if (userOk == true) {
+      await appConf.put(_freeSoftwareNoticeAcceptedKey, true);
     } else {
       exit(0);
     }
@@ -321,13 +396,20 @@ class SplashUI extends HookConsumerWidget {
     try {
       final logFile = getDPrintFile();
       if (logFile == null || !await logFile.exists()) {
-        diagnosticLogs.value = [...diagnosticLogs.value, '[${DateTime.now().toString().substring(11, 23)}] ⚠ 日志文件不存在'];
+        diagnosticLogs.value = [
+          ...diagnosticLogs.value,
+          S.current.splash_log_not_exist(
+            DateTime.now().toString().substring(11, 23),
+          ),
+        ];
         return;
       }
 
       diagnosticLogs.value = [
         ...diagnosticLogs.value,
-        '[${DateTime.now().toString().substring(11, 23)}] --- 开始读取完整日志文件 ---',
+        S.current.splash_start_read_log(
+          DateTime.now().toString().substring(11, 23),
+        ),
       ];
 
       final logContent = await logFile.readAsString();
@@ -341,10 +423,20 @@ class SplashUI extends HookConsumerWidget {
           newLogs.add(logLines[i]);
         }
       }
-      newLogs.add('[${DateTime.now().toString().substring(11, 23)}] --- 日志读取完成 (显示最后1000行) ---');
+      newLogs.add(
+        S.current.splash_log_read_done(
+          DateTime.now().toString().substring(11, 23),
+        ),
+      );
       diagnosticLogs.value = newLogs;
     } catch (e) {
-      diagnosticLogs.value = [...diagnosticLogs.value, '[${DateTime.now().toString().substring(11, 23)}] ✗ 读取日志失败: $e'];
+      diagnosticLogs.value = [
+        ...diagnosticLogs.value,
+        S.current.splash_read_log_failed(
+          DateTime.now().toString().substring(11, 23),
+          e,
+        ),
+      ];
     }
   }
 
@@ -357,19 +449,20 @@ class SplashUI extends HookConsumerWidget {
         await Hive.close();
         dPrint(S.current.splash_hive_boxes_closed);
       } catch (e) {
-        dPrint('[诊断] 关闭 Hive boxes 失败: $e');
+        dPrint(S.current.splash_close_hive_failed(e));
       }
 
       // 获取数据库目录
-      final appSupportDir = (await getApplicationSupportDirectory()).absolute.path;
+      final appSupportDir =
+          (await getApplicationSupportDirectory()).absolute.path;
       final dbDir = Directory('$appSupportDir/db');
 
       if (await dbDir.exists()) {
-        dPrint('[诊断] 正在删除数据库目录: ${dbDir.path}');
+        dPrint(S.current.splash_deleting_db(dbDir.path));
         await dbDir.delete(recursive: true);
         dPrint(S.current.splash_db_deleted);
       } else {
-        dPrint('[诊断] 数据库目录不存在: ${dbDir.path}');
+        dPrint(S.current.splash_db_not_exist(dbDir.path));
       }
 
       // 显示提示并退出
@@ -386,5 +479,86 @@ class SplashUI extends HookConsumerWidget {
     } catch (e) {
       dPrint(S.current.splash_reset_db_failed(e.toString()));
     }
+  }
+}
+
+class _FreeSoftwareNoticeDialog extends StatefulWidget {
+  const _FreeSoftwareNoticeDialog({required this.confirmText});
+
+  final String confirmText;
+
+  @override
+  State<_FreeSoftwareNoticeDialog> createState() =>
+      _FreeSoftwareNoticeDialogState();
+}
+
+class _FreeSoftwareNoticeDialogState extends State<_FreeSoftwareNoticeDialog> {
+  late final TextEditingController _controller;
+  bool _canContinue = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onChanged(String value) {
+    final canContinue = value == widget.confirmText;
+    if (_canContinue != canContinue) {
+      setState(() => _canContinue = canContinue);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ContentDialog(
+      title: Text(S.current.app_splash_free_software_notice),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * .5,
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            S.current.app_splash_free_software_notice_content(
+              widget.confirmText,
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextBox(
+            controller: _controller,
+            placeholder: S.current.app_splash_free_software_notice_input_hint(
+              widget.confirmText,
+            ),
+            autofocus: true,
+            onChanged: _onChanged,
+            onSubmitted: (_) {
+              if (_canContinue) Navigator.pop(context, true);
+            },
+          ),
+        ],
+      ),
+      actions: [
+        FilledButton(
+          onPressed: _canContinue ? () => Navigator.pop(context, true) : null,
+          child: Padding(
+            padding: const EdgeInsets.only(
+              top: 2,
+              bottom: 2,
+              left: 8,
+              right: 8,
+            ),
+            child: Text(S.current.app_splash_free_software_notice_confirm),
+          ),
+        ),
+      ],
+    );
   }
 }

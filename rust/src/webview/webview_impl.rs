@@ -2,6 +2,7 @@
 // 使用 wry + tao 实现跨平台 WebView
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
@@ -387,13 +388,13 @@ fn run_webview_loop(
                                 let progress = payload.get("progress").and_then(|v| v.as_f64());
                                 let is_loading = payload.get("is_loading").and_then(|v| v.as_bool()).unwrap_or(false);
                                 let dot_frame = payload.get("dot_frame").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
-                                
+
                                 let base_title = original_title_ipc.read().clone();
-                                
+
                                 let new_title = if is_loading {
                                     // Get Windows progress animation character
                                     let progress_char = get_progress_char(dot_frame);
-                                    
+
                                     if let Some(p) = progress {
                                         let percent = (p * 100.0).round() as i32;
                                         format!("{} {} {}%", base_title, progress_char, percent)
@@ -404,7 +405,7 @@ fn run_webview_loop(
                                     // Loading complete, restore original title
                                     base_title
                                 };
-                                
+
                                 let _ = proxy_ipc.send_event(UserEvent::Command(
                                     WebViewCommand::SetWindowTitle(new_title)
                                 ));
@@ -614,7 +615,7 @@ fn run_webview_loop(
                             "is_loading": false,
                             "url": url
                         });
-                        
+
                         // Script to check CF challenge and notify Rust via IPC if detected
                         let cf_check_script = format!(
                             r#"(function() {{
@@ -681,8 +682,8 @@ fn run_webview_loop(
         .build(&window)
         .expect("Failed to create webview");
 
-    let webview = Arc::new(webview);
-    let webview_cmd = Arc::clone(&webview);
+    let webview = Rc::new(webview);
+    let webview_cmd = Rc::clone(&webview);
 
     // Spawn command handler thread
     let proxy_cmd = proxy.clone();
@@ -709,16 +710,16 @@ fn run_webview_loop(
             }
             Event::UserEvent(user_event) => match user_event {
                 UserEvent::Command(cmd) => {
-                    handle_command(
-                        &webview_cmd,
-                        &window,
-                        cmd,
-                        &state,
-                        &nav_history,
-                        &event_tx,
-                        &is_closed,
+                    let context = CommandContext {
+                        webview: &webview_cmd,
+                        window: &window,
+                        state: &state,
+                        nav_history: &nav_history,
+                        event_tx: &event_tx,
+                        is_closed: &is_closed,
                         control_flow,
-                    );
+                    };
+                    handle_command(cmd, context);
                 }
                 UserEvent::Quit => {
                     is_closed.store(true, Ordering::SeqCst);
@@ -735,69 +736,90 @@ fn run_webview_loop(
     drop(window);
 }
 
-fn handle_command(
-    webview: &Arc<WebView>,
-    window: &Arc<Window>,
-    command: WebViewCommand,
-    state: &Arc<RwLock<WebViewNavigationState>>,
-    nav_history: &Arc<RwLock<NavigationHistory>>,
-    event_tx: &Sender<WebViewEvent>,
-    is_closed: &Arc<AtomicBool>,
-    control_flow: &mut ControlFlow,
-) {
+struct CommandContext<'a> {
+    webview: &'a WebView,
+    window: &'a Window,
+    state: &'a RwLock<WebViewNavigationState>,
+    nav_history: &'a RwLock<NavigationHistory>,
+    event_tx: &'a Sender<WebViewEvent>,
+    is_closed: &'a AtomicBool,
+    control_flow: &'a mut ControlFlow,
+}
+
+fn handle_command(command: WebViewCommand, context: CommandContext<'_>) {
     match command {
         WebViewCommand::Navigate(url) => {
             {
-                let mut s = state.write();
+                let mut s = context.state.write();
                 s.url = url.clone();
                 s.is_loading = true;
             }
-            let _ = webview.load_url(&url);
-            let _ = event_tx.send(WebViewEvent::NavigationStarted { url });
+            let _ = context.webview.load_url(&url);
+            let _ = context
+                .event_tx
+                .send(WebViewEvent::NavigationStarted { url });
         }
         WebViewCommand::GoBack => {
             let can_go = {
-                let mut history = nav_history.write();
+                let mut history = context.nav_history.write();
                 history.go_back()
             };
             if can_go {
-                let _ = webview.evaluate_script("history.back()");
+                let _ = context.webview.evaluate_script("history.back()");
             }
         }
         WebViewCommand::GoForward => {
             let can_go = {
-                let mut history = nav_history.write();
+                let mut history = context.nav_history.write();
                 history.go_forward()
             };
             if can_go {
-                let _ = webview.evaluate_script("history.forward()");
+                let _ = context.webview.evaluate_script("history.forward()");
             }
         }
         WebViewCommand::Reload => {
-            let _ = webview.evaluate_script("location.reload()");
+            let _ = context.webview.evaluate_script("location.reload()");
         }
         WebViewCommand::Stop => {
-            let _ = webview.evaluate_script("window.stop()");
+            let _ = context.webview.evaluate_script("window.stop()");
         }
         WebViewCommand::ExecuteScript(script) => {
-            let _ = webview.evaluate_script(&script);
+            let _ = context.webview.evaluate_script(&script);
         }
         WebViewCommand::SetVisibility(visible) => {
-            window.set_visible(visible);
+            context.window.set_visible(visible);
         }
         WebViewCommand::Close => {
-            is_closed.store(true, Ordering::SeqCst);
-            let _ = event_tx.send(WebViewEvent::WindowClosed);
-            *control_flow = ControlFlow::Exit;
+            context.is_closed.store(true, Ordering::SeqCst);
+            let _ = context.event_tx.send(WebViewEvent::WindowClosed);
+            *context.control_flow = ControlFlow::Exit;
         }
         WebViewCommand::SetWindowSize(width, height) => {
-            let _ = window.set_inner_size(LogicalSize::new(width, height));
+            context
+                .window
+                .set_inner_size(LogicalSize::new(width, height));
         }
         WebViewCommand::SetWindowPosition(x, y) => {
-            window.set_outer_position(LogicalPosition::new(x, y));
+            context
+                .window
+                .set_outer_position(LogicalPosition::new(x, y));
         }
         WebViewCommand::SetWindowTitle(title) => {
-            window.set_title(&title);
+            context.window.set_title(&title);
+        }
+        WebViewCommand::GetCookiesForUrl(url, tx) => {
+            let result = context
+                .webview
+                .cookies_for_url(&url)
+                .map(|cookies| {
+                    cookies
+                        .into_iter()
+                        .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
         }
     }
 }

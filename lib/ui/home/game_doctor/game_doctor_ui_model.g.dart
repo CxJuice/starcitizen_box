@@ -42,13 +42,13 @@ final class HomeGameDoctorUIModelProvider
 }
 
 String _$homeGameDoctorUIModelHash() =>
-    r'8226e88797ecc68920f684a1dc072a340bca783a';
+    r'a3989b435e09d1ce760580f715ac9102ebd38d7e';
 
 abstract class _$HomeGameDoctorUIModel extends $Notifier<HomeGameDoctorState> {
   HomeGameDoctorState build();
   @$mustCallSuper
   @override
-  void runBuild() {
+  WhenComplete runBuild() {
     final ref = this.ref as $Ref<HomeGameDoctorState, HomeGameDoctorState>;
     final element =
         ref.element
@@ -58,6 +58,6 @@ abstract class _$HomeGameDoctorUIModel extends $Notifier<HomeGameDoctorState> {
               Object?,
               Object?
             >;
-    element.handleCreate(ref, build);
+    return element.handleCreate(ref, build);
   }
 }

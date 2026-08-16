@@ -22,6 +22,7 @@ import 'home_ui_model.dart';
 import 'input_method/input_method_dialog_ui.dart';
 import 'localization/localization_dialog_ui.dart';
 import 'localization/localization_ui_model.dart';
+import 'rsi_server_status.dart';
 
 class HomeUI extends HookConsumerWidget {
   const HomeUI({super.key});
@@ -174,6 +175,16 @@ class HomeUI extends HookConsumerWidget {
               Button(
                 onPressed: homeState.webLocalizationVersionsData == null
                     ? null
+                    : () => model.openP4kUpdater(context),
+                child: const Padding(
+                  padding: EdgeInsets.all(6),
+                  child: FaIcon(FontAwesomeIcons.download, size: 16),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Button(
+                onPressed: homeState.webLocalizationVersionsData == null
+                    ? null
                     : () => model.launchRSI(context),
                 style: homeState.isCurGameRunning
                     ? null
@@ -301,7 +312,7 @@ class HomeUI extends HookConsumerWidget {
                       name: S.current.home_action_dps_calculator_localization,
                       webTitle:
                           S.current.home_action_dps_calculator_localization,
-                      webURL: "https://www.erkul.games/live/calculator",
+                      webURL: "https://www.erkul.games",
                       info: S
                           .current
                           .home_action_info_ship_upgrade_damage_value_query,
@@ -489,8 +500,8 @@ class HomeUI extends HookConsumerWidget {
                   shrinkWrap: true,
                   itemBuilder: (BuildContext context, int index) {
                     final item = homeState.citizenNewsData!.articles[index];
-                    return Tilt(
-                      shadowConfig: const ShadowConfig(maxIntensity: .3),
+                    return Tilt.base(
+                      shadowConfig: const ShadowBaseConfig(maxIntensity: .3),
                       borderRadius: BorderRadius.circular(12),
                       child: GestureDetector(
                         onTap: () {
@@ -712,8 +723,8 @@ class HomeUI extends HookConsumerWidget {
     String? info,
     String? touchKey,
   }) {
-    return Tilt(
-      shadowConfig: const ShadowConfig(maxIntensity: .3),
+    return Tilt.base(
+      shadowConfig: const ShadowBaseConfig(maxIntensity: .3),
       borderRadius: BorderRadius.circular(12),
       child: GestureDetector(
         onTap: () {
@@ -782,8 +793,8 @@ class HomeUI extends HookConsumerWidget {
       "Arena Commander": S.current.home_action_rsi_status_arena_commander,
     };
 
-    return Tilt(
-      shadowConfig: const ShadowConfig(maxIntensity: .2),
+    return Tilt.base(
+      shadowConfig: const ShadowBaseConfig(maxIntensity: .2),
       borderRadius: BorderRadius.circular(12),
       child: GestureDetector(
         onTap: () {
@@ -816,9 +827,7 @@ class HomeUI extends HookConsumerWidget {
                               child: Center(
                                 child: FaIcon(
                                   FontAwesomeIcons.solidCircle,
-                                  color: model.isRSIServerStatusOK(item)
-                                      ? Colors.green
-                                      : Colors.red,
+                                  color: rsiServerStatusColor(item["status"]),
                                   size: 12,
                                 ),
                               ),
@@ -851,9 +860,9 @@ class HomeUI extends HookConsumerWidget {
     double width,
     HomeUIModelState homeState,
   ) {
-    return Tilt(
+    return Tilt.base(
       borderRadius: BorderRadius.circular(12),
-      shadowConfig: const ShadowConfig(disable: true),
+      shadowConfig: const ShadowBaseConfig(disable: true),
       child: GestureDetector(
         onTap: () => _onTapFestival(context),
         child: Container(
@@ -977,8 +986,21 @@ class HomeUI extends HookConsumerWidget {
         model.checkLocalizationUpdate();
         await showDialog(
           context: context,
-          dismissWithEsc: false,
-          builder: (BuildContext context) => const LocalizationDialogUI(),
+          barrierDismissible: true,
+          dismissWithEsc: true,
+          builder: (BuildContext context) => Consumer(
+            builder: (context, ref, child) {
+              final isWorking = ref.watch(
+                localizationUIModelProvider.select(
+                  (state) => state.workingVersion.isNotEmpty,
+                ),
+              );
+              return PopScope(
+                canPop: !isWorking,
+                child: const LocalizationDialogUI(),
+              );
+            },
+          ),
         );
         model.checkLocalizationUpdate(skipReload: true);
         break;

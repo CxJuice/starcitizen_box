@@ -40,52 +40,209 @@ class IndexUI extends HookConsumerWidget {
     }, const []);
 
     return NavigationView(
-      appBar: NavigationAppBar(
-        automaticallyImplyLeading: false,
-        title: () {
-          return DragToMoveArea(
-            child: Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: Row(
-                children: [
-                  Image.asset("assets/app_logo_mini.png", width: 20, height: 20, fit: BoxFit.cover),
-                  const SizedBox(width: 12),
-                  Text(S.current.app_index_version_info(ConstConf.appVersion, ConstConf.isMSE ? "" : " Dev")),
-                ],
+      titleBar: _makeTitleBar(context, curIndex),
+      content: Row(
+        children: [
+          _makeNavigationBar(curIndex),
+          Expanded(child: pageMenus.values.elementAt(curIndex.value).$2),
+        ],
+      ),
+    );
+  }
+
+  Widget _makeTitleBar(BuildContext context, ValueNotifier<int> curIndex) {
+    return SizedBox(
+      height: 50,
+      child: Row(
+        children: [
+          const SizedBox(width: kTitleBarContentLeftPadding),
+          Expanded(
+            child: DragToMoveArea(
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Row(
+                  children: [
+                    Image.asset(
+                      "assets/app_logo_mini.png",
+                      width: 20,
+                      height: 20,
+                      fit: BoxFit.cover,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      S.current.app_index_version_info(
+                        ConstConf.appVersion,
+                        ConstConf.isMSE ? "" : " Dev",
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          );
-        }(),
-        actions: Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            UserAvatarWidget(onTapNavigateToPartyRoom: () => _navigateToPartyRoom(curIndex)),
-            const SizedBox(width: 12),
-            IconButton(
-              icon: Stack(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(6),
-                    child: Icon(FluentIcons.installation, size: 22, color: Colors.white.withValues(alpha: .6)),
+          ),
+          UserAvatarWidget(
+            onTapNavigateToPartyRoom: () => _navigateToPartyRoom(curIndex),
+          ),
+          const SizedBox(width: 12),
+          IconButton(
+            icon: Stack(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Icon(
+                    FluentIcons.installation,
+                    size: 22,
+                    color: Colors.white.withValues(alpha: .6),
                   ),
-                  _makeDownloadTaskNumWidget(),
-                ],
-              ),
-              onPressed: () => _goDownloader(context),
+                ),
+                _makeDownloadTaskNumWidget(),
+              ],
             ),
-            const SizedBox(width: 24),
-            const WindowButtons(),
-          ],
+            onPressed: () => _goDownloader(context),
+          ),
+          const SizedBox(width: 24),
+          const WindowButtons(),
+        ],
+      ),
+    );
+  }
+
+  Widget _makeNavigationBar(ValueNotifier<int> curIndex) {
+    final menus = pageMenus.entries.toList();
+
+    return Container(
+      width: 78,
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        border: Border(
+          right: BorderSide(color: Colors.white.withValues(alpha: .04)),
         ),
       ),
-      pane: NavigationPane(
-        key: Key("NavigationPane_${S.current.app_language_code}"),
-        selected: curIndex.value,
-        items: getNavigationPaneItems(curIndex),
-        size: NavigationPaneSize(openWidth: S.current.app_language_code.startsWith("zh") ? 64 : 74),
+      child: SafeArea(
+        top: false,
+        bottom: false,
+        child: ListView.separated(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          itemCount: menus.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 2),
+          itemBuilder: (context, index) {
+            final menu = menus[index];
+            final selected = curIndex.value == index;
+            return _makeNavigationItem(
+              context,
+              icon: menu.key,
+              title: menu.value.$1,
+              selected: selected,
+              onTap: () => curIndex.value = index,
+            );
+          },
+        ),
       ),
-      paneBodyBuilder: (item, child) {
-        return item!.body;
+    );
+  }
+
+  Widget _makeNavigationItem(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    final accentColor = FluentTheme.of(context).accentColor;
+    final theme = FluentTheme.of(context);
+    final navTheme = NavigationPaneTheme.of(context);
+
+    return HoverButton(
+      onPressed: onTap,
+      builder: (context, states) {
+        final tileStates = selected
+            ? {
+                if (states.contains(WidgetState.hovered))
+                  WidgetState.pressed
+                else
+                  WidgetState.hovered,
+              }
+            : states;
+        final tileColor =
+            (navTheme.tileColor ?? kDefaultPaneItemColor(context, false))
+                .resolve(tileStates);
+        final textStyle =
+            (selected
+                    ? navTheme.selectedTextStyle
+                    : navTheme.unselectedTextStyle)
+                ?.resolve(states);
+        final iconColor =
+            textStyle?.color ??
+            (selected
+                    ? navTheme.selectedIconColor
+                    : navTheme.unselectedIconColor)
+                ?.resolve(states);
+
+        return Semantics(
+          label: title,
+          selected: selected,
+          child: AnimatedContainer(
+            duration: theme.fastAnimationDuration,
+            curve: theme.animationCurve,
+            height: 56,
+            margin: const EdgeInsetsDirectional.symmetric(horizontal: 4),
+            decoration: BoxDecoration(
+              color: tileColor,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: IconTheme.merge(
+              data: IconThemeData(color: iconColor),
+              child: FocusBorder(
+                focused: states.contains(WidgetState.focused),
+                renderOutside: false,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    AnimatedPositionedDirectional(
+                      duration: theme.fastAnimationDuration,
+                      curve: theme.animationCurve,
+                      start: selected ? 0 : -3,
+                      top: selected ? 10 : 23,
+                      bottom: selected ? 10 : 23,
+                      child: AnimatedContainer(
+                        duration: theme.fastAnimationDuration,
+                        curve: theme.animationCurve,
+                        width: 3,
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? (navTheme.highlightColor ?? accentColor)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(100),
+                        ),
+                      ),
+                    ),
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(icon, size: 22),
+                        const SizedBox(height: 3),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              title,
+                              maxLines: 1,
+                              style: (textStyle ?? const TextStyle()).copyWith(
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
       },
     );
   }
@@ -95,40 +252,12 @@ class IndexUI extends HookConsumerWidget {
     FluentIcons.game: (S.current.app_index_menu_lobby, const PartyRoomUI()),
     FluentIcons.toolbox: (S.current.app_index_menu_tools, const ToolsUI()),
     FluentIcons.power_apps: ((S.current.nav_title), const NavUI()),
-    FluentIcons.settings: (S.current.app_index_menu_settings, const SettingsUI()),
+    FluentIcons.settings: (
+      S.current.app_index_menu_settings,
+      const SettingsUI(),
+    ),
     FluentIcons.info: (S.current.app_index_menu_about, const AboutUI()),
   };
-
-  List<NavigationPaneItem> getNavigationPaneItems(ValueNotifier<int> curIndexState) {
-    // width = 64
-    return [
-      for (final kv in pageMenus.entries)
-        PaneItem(
-          icon: Padding(
-            padding: const EdgeInsets.only(top: 6, bottom: 6),
-            child: SizedBox(
-              width: S.current.app_language_code.startsWith("zh") ? 32 : 42,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(kv.key, size: 18),
-                  const SizedBox(height: 3),
-                  Text(kv.value.$1, style: const TextStyle(fontSize: 11)),
-                ],
-              ),
-            ),
-          ),
-          // title: Text(kv.value),
-          body: kv.value.$2,
-          onTap: () => _onTapIndexMenu(kv.value.$1, curIndexState),
-        ),
-    ];
-  }
-
-  void _onTapIndexMenu(String value, ValueNotifier<int> curIndexState) {
-    final pageIndex = pageMenus.values.toList().indexWhere((element) => element.$1 == value);
-    curIndexState.value = pageIndex;
-  }
 
   Widget _makeDownloadTaskNumWidget() {
     return Consumer(
@@ -141,9 +270,20 @@ class IndexUI extends HookConsumerWidget {
           bottom: 0,
           right: 0,
           child: Container(
-            decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)),
-            padding: const EdgeInsets.only(left: 6, right: 6, bottom: 1.5, top: 1.5),
-            child: Text("${downloadState.totalTaskNum}", style: const TextStyle(fontSize: 8, color: Colors.white)),
+            decoration: BoxDecoration(
+              color: Colors.red,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            padding: const EdgeInsets.only(
+              left: 6,
+              right: 6,
+              bottom: 1.5,
+              top: 1.5,
+            ),
+            child: Text(
+              "${downloadState.totalTaskNum}",
+              style: const TextStyle(fontSize: 8, color: Colors.white),
+            ),
           ),
         );
       },
@@ -156,7 +296,9 @@ class IndexUI extends HookConsumerWidget {
 
   void _navigateToPartyRoom(ValueNotifier<int> curIndexState) {
     // 查找 PartyRoomUI 在菜单中的索引
-    final partyRoomIndex = pageMenus.values.toList().indexWhere((element) => element.$2 is PartyRoomUI);
+    final partyRoomIndex = pageMenus.values.toList().indexWhere(
+      (element) => element.$2 is PartyRoomUI,
+    );
     if (partyRoomIndex >= 0) {
       curIndexState.value = partyRoomIndex;
     }

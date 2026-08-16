@@ -1,10 +1,7 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::model_convert::{
-    DecodedTexture as ConvertTexture, GltfMaterialData, SceneData, ScenePrimitive,
-};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec2, Vec3};
 use parking_lot::Mutex;
@@ -250,175 +247,6 @@ impl RenderSession {
     }
 }
 
-impl ParsedModelScene {
-    fn from_converted(
-        scene: &SceneData,
-        textures: &[ConvertTexture],
-        materials: &[GltfMaterialData],
-        materials_by_id: &HashMap<i32, usize>,
-    ) -> Result<Self> {
-        let parsed_textures = textures
-            .iter()
-            .filter(|texture| texture.width > 0 && texture.height > 0 && !texture.rgba8.is_empty())
-            .map(|texture| ParsedTexture {
-                width: texture.width,
-                height: texture.height,
-                rgba: texture.rgba8.clone(),
-            })
-            .collect::<Vec<_>>();
-        let mut triangles = Vec::new();
-        for mesh in &scene.meshes {
-            let transform = mesh_transform(mesh);
-            let normal_transform = transform.inverse().transpose();
-            let primitives = if mesh.primitives.is_empty() {
-                vec![ScenePrimitive {
-                    first_index: 0,
-                    num_indices: mesh.indices.len() as u32,
-                    first_vertex: 0,
-                    num_vertices: mesh.positions.len() as u32,
-                    material_id: -1,
-                }]
-            } else {
-                mesh.primitives.clone()
-            };
-
-            for primitive in primitives {
-                let first = primitive.first_index as usize;
-                let count = primitive.num_indices as usize;
-                let end = first.saturating_add(count);
-                if count == 0 || end > mesh.indices.len() {
-                    continue;
-                }
-                let material_index = materials_by_id
-                    .get(&primitive.material_id)
-                    .copied()
-                    .unwrap_or(0);
-                let Some(material) = converted_material(materials.get(material_index)) else {
-                    continue;
-                };
-                for face in mesh.indices[first..end].chunks_exact(3) {
-                    let Some(a) =
-                        converted_vertex(mesh, face[0] as usize, transform, normal_transform)
-                    else {
-                        continue;
-                    };
-                    let Some(b) =
-                        converted_vertex(mesh, face[1] as usize, transform, normal_transform)
-                    else {
-                        continue;
-                    };
-                    let Some(c) =
-                        converted_vertex(mesh, face[2] as usize, transform, normal_transform)
-                    else {
-                        continue;
-                    };
-                    triangles.push(ParsedModelTriangle {
-                        vertices: [a, b, c],
-                        color: material.color,
-                        alpha: material.alpha,
-                        alpha_cutoff: material.alpha_cutoff,
-                        texture_strength: material.texture_strength,
-                        texture_index: material.texture_index,
-                    });
-                }
-            }
-        }
-        if triangles.is_empty() {
-            return Err(anyhow!("model geometry: no triangles"));
-        }
-        triangles = filter_small_triangle_islands(triangles);
-        Ok(Self {
-            triangles,
-            textures: parsed_textures,
-        })
-    }
-}
-
-fn mesh_transform(mesh: &crate::model_convert::SceneMesh) -> Mat4 {
-    if let Some(matrix) = mesh.node_matrix {
-        Mat4::from_cols_array(&matrix)
-    } else {
-        let translation = mesh.node_translation.unwrap_or([0.0, 0.0, 0.0]);
-        let rotation = mesh.node_rotation.unwrap_or([0.0, 0.0, 0.0, 1.0]);
-        let scale = mesh.node_scale.unwrap_or([1.0, 1.0, 1.0]);
-        Mat4::from_scale_rotation_translation(
-            Vec3::from(scale),
-            Quat::from_array(rotation),
-            Vec3::from(translation),
-        )
-    }
-}
-
-fn converted_vertex(
-    mesh: &crate::model_convert::SceneMesh,
-    index: usize,
-    transform: Mat4,
-    normal_transform: Mat4,
-) -> Option<ParsedModelVertex> {
-    let position = Vec3::from(*mesh.positions.get(index)?);
-    let normal = mesh
-        .normals
-        .get(index)
-        .copied()
-        .map(Vec3::from)
-        .unwrap_or(Vec3::Y);
-    let uv = mesh
-        .uvs
-        .get(index)
-        .copied()
-        .map(Vec2::from)
-        .unwrap_or(Vec2::ZERO);
-    Some(ParsedModelVertex {
-        position: transform.transform_point3(position),
-        normal: normal_transform
-            .transform_vector3(normal)
-            .normalize_or_zero(),
-        uv,
-    })
-}
-
-fn converted_material(material: Option<&GltfMaterialData>) -> Option<ParsedMaterial> {
-    let Some(material) = material else {
-        return Some(ParsedMaterial {
-            color: Vec3::new(0.62, 0.68, 0.72),
-            alpha: 1.0,
-            alpha_cutoff: 0.0,
-            texture_strength: 0.0,
-            texture_index: None,
-        });
-    };
-    if material.no_draw {
-        return None;
-    }
-    let alpha_mode = material.alpha_mode.as_deref().unwrap_or("OPAQUE");
-    let alpha_cutoff = material.alpha_cutoff.unwrap_or(0.5);
-    let factor = material
-        .base_color_factor
-        .unwrap_or([0.62, 0.68, 0.72, 1.0]);
-    let alpha = factor[3];
-    if alpha <= 0.0
-        || (alpha_mode == "MASK" && alpha <= alpha_cutoff)
-        || (alpha_mode == "BLEND" && alpha < 0.75)
-    {
-        return None;
-    }
-    Some(ParsedMaterial {
-        color: Vec3::new(factor[0], factor[1], factor[2]),
-        alpha,
-        alpha_cutoff: if alpha_mode == "MASK" {
-            alpha_cutoff
-        } else if alpha_mode == "BLEND" {
-            0.05
-        } else {
-            0.0
-        },
-        texture_strength: preview_texture_strength_name(
-            material.name.as_deref().unwrap_or_default(),
-        ),
-        texture_index: material.base_color_texture.or(material.diffuse_texture),
-    })
-}
-
 fn wgpu_shared_context() -> Result<Arc<WgpuSharedContext>> {
     {
         let shared = WGPU_SHARED_CONTEXT.lock();
@@ -432,15 +260,16 @@ fn wgpu_shared_context() -> Result<Arc<WgpuSharedContext>> {
         return Ok(context.clone());
     }
 
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
-        ..Default::default()
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     let adapter =
         futures_lite::future::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .map_err(|e| anyhow!("wgpu renderer: no adapter: {e:?}"))?;
     let (device, queue) =
@@ -448,6 +277,7 @@ fn wgpu_shared_context() -> Result<Arc<WgpuSharedContext>> {
             label: Some("sctb model renderer device"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
         }))
@@ -491,8 +321,8 @@ fn wgpu_shared_context() -> Result<Arc<WgpuSharedContext>> {
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("sctb model renderer pipeline layout"),
-        bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&bind_group_layout)],
+        immediate_size: 0,
     });
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("sctb model renderer pipeline"),
@@ -501,7 +331,7 @@ fn wgpu_shared_context() -> Result<Arc<WgpuSharedContext>> {
             module: &shader,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
-            buffers: &[wgpu_vertex_buffer_layout()],
+            buffers: &[Some(wgpu_vertex_buffer_layout())],
         },
         fragment: Some(wgpu::FragmentState {
             module: &shader,
@@ -520,8 +350,8 @@ fn wgpu_shared_context() -> Result<Arc<WgpuSharedContext>> {
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: Default::default(),
             bias: Default::default(),
         }),
@@ -529,7 +359,7 @@ fn wgpu_shared_context() -> Result<Arc<WgpuSharedContext>> {
             count: WGPU_SAMPLE_COUNT,
             ..Default::default()
         },
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
     let edge_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -539,7 +369,7 @@ fn wgpu_shared_context() -> Result<Arc<WgpuSharedContext>> {
             module: &shader,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
-            buffers: &[wgpu_vertex_buffer_layout()],
+            buffers: &[Some(wgpu_vertex_buffer_layout())],
         },
         fragment: Some(wgpu::FragmentState {
             module: &shader,
@@ -558,8 +388,8 @@ fn wgpu_shared_context() -> Result<Arc<WgpuSharedContext>> {
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: false,
-            depth_compare: wgpu::CompareFunction::LessEqual,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: Default::default(),
             bias: Default::default(),
         }),
@@ -567,7 +397,7 @@ fn wgpu_shared_context() -> Result<Arc<WgpuSharedContext>> {
             count: WGPU_SAMPLE_COUNT,
             ..Default::default()
         },
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
 
@@ -673,9 +503,13 @@ impl WgpuModelSession {
 
     fn render(&self, camera_pos: Vec3, camera_target: Vec3, model_radius: f32) -> Result<Vec<u8>> {
         let aspect = self.width as f32 / self.height as f32;
-        let projection =
-            Mat4::perspective_rh(35.0_f32.to_radians(), aspect, 0.01, model_radius * 20.0);
-        let view = Mat4::look_at_rh(camera_pos, camera_target, Vec3::Y);
+        let projection = glam::camera::rh::proj::directx::perspective(
+            35.0_f32.to_radians(),
+            aspect,
+            0.01,
+            model_radius * 20.0,
+        );
+        let view = glam::camera::rh::view::look_at_mat4(camera_pos, camera_target, Vec3::Y);
         let uniforms = WgpuUniforms {
             mvp: (projection * view).to_cols_array_2d(),
             light_dir: [-0.45, -0.75, -0.35, 0.0],
@@ -768,12 +602,14 @@ impl WgpuModelSession {
         });
         self.shared
             .device
-            .poll(wgpu::PollType::Wait)
+            .poll(wgpu::PollType::wait_indefinitely())
             .map_err(|e| anyhow!("wgpu renderer: poll failed: {e:?}"))?;
         futures::executor::block_on(receiver)
             .map_err(|_| anyhow!("wgpu renderer: readback channel closed"))?
             .map_err(|e| anyhow!("wgpu renderer: map readback failed: {e:?}"))?;
-        let mapped = slice.get_mapped_range();
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|e| anyhow!("wgpu renderer: get mapped range failed: {e:?}"))?;
         let mut rgba = Vec::with_capacity((self.width * self.height * 4) as usize);
         for row in mapped
             .chunks(padded_bytes_per_row)
@@ -1022,7 +858,7 @@ fn create_wgpu_texture_bind_groups(
         address_mode_w: wgpu::AddressMode::Repeat,
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
         ..Default::default()
     });
 
@@ -1171,62 +1007,6 @@ pub fn create_session_with_id(
 ) -> Result<(String, f32)> {
     let session = RenderSession::new(width, height, glb_data, bg_color)?;
     let model_radius = session.model_radius;
-    let mut sessions = SESSIONS.lock();
-    sessions.insert(session_id.clone(), Arc::new(Mutex::new(session)));
-    Ok((session_id, model_radius))
-}
-
-pub fn create_session_from_model_scene(
-    scene: &SceneData,
-    textures: &[ConvertTexture],
-    materials: &[GltfMaterialData],
-    materials_by_id: &HashMap<i32, usize>,
-    width: u32,
-    height: u32,
-    bg_color: Option<[f32; 4]>,
-) -> Result<(String, f32)> {
-    let session_id = Uuid::new_v4().to_string();
-    create_session_from_model_scene_with_id(
-        session_id,
-        scene,
-        textures,
-        materials,
-        materials_by_id,
-        width,
-        height,
-        bg_color,
-    )
-}
-
-pub fn create_session_from_model_scene_with_id(
-    session_id: String,
-    scene: &SceneData,
-    textures: &[ConvertTexture],
-    materials: &[GltfMaterialData],
-    materials_by_id: &HashMap<i32, usize>,
-    width: u32,
-    height: u32,
-    bg_color: Option<[f32; 4]>,
-) -> Result<(String, f32)> {
-    let parsed = ParsedModelScene::from_converted(scene, textures, materials, materials_by_id)?;
-    let (model_center, model_radius) = parsed_model_bounds(&parsed.triangles)?;
-    let bg = bg_color
-        .map(|color| {
-            [
-                (color[0] * 255.0).clamp(0.0, 255.0) as u8,
-                (color[1] * 255.0).clamp(0.0, 255.0) as u8,
-                (color[2] * 255.0).clamp(0.0, 255.0) as u8,
-                (color[3] * 255.0).clamp(0.0, 255.0) as u8,
-            ]
-        })
-        .unwrap_or([59, 71, 80, 255]);
-    let session = RenderSession {
-        backend: RenderSessionBackend::Wgpu(WgpuModelSession::new(width, height, &parsed, bg)?),
-        width,
-        height,
-        model_center,
-        model_radius: model_radius.max(1.0),
-    };
     let mut sessions = SESSIONS.lock();
     sessions.insert(session_id.clone(), Arc::new(Mutex::new(session)));
     Ok((session_id, model_radius))
@@ -1382,12 +1162,12 @@ fn load_parsed_model_scene(glb_data: &[u8]) -> Result<ParsedModelScene> {
         .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow!("model geometry: missing scene nodes"))?;
 
-    let textures = load_parsed_textures(&json, &bin);
+    let textures = load_parsed_textures(&json, bin);
     let mut triangles = Vec::<ParsedModelTriangle>::new();
     for root in scene_nodes.iter().filter_map(|v| v.as_u64()) {
         collect_node_triangles(
             &json,
-            &bin,
+            bin,
             nodes,
             root as usize,
             Mat4::IDENTITY,

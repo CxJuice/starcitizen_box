@@ -373,15 +373,12 @@ pub fn resolve_shortcut(_lnk_path: String) -> anyhow::Result<String> {
 pub fn open_dir_with_explorer(path: &str, is_file: bool) -> anyhow::Result<()> {
     use std::process::Command;
 
-    if is_file {
-        Command::new("explorer.exe")
-            .args(["/select,", path])
-            .spawn()?;
+    let args = if is_file {
+        vec!["/select,", path]
     } else {
-        Command::new("explorer.exe")
-            .args(["/select,", path])
-            .spawn()?;
-    }
+        vec![path]
+    };
+    Command::new("explorer.exe").args(args).spawn()?;
 
     Ok(())
 }
@@ -548,20 +545,93 @@ pub fn get_process_list_by_name(process_name: &str) -> anyhow::Result<Vec<Proces
     Ok(Vec::new())
 }
 
-/// Kill processes by name
+#[cfg(target_os = "windows")]
+struct CloseWindowContext {
+    pid: u32,
+    requests_sent: u32,
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn close_process_window(
+    hwnd: windows::Win32::Foundation::HWND,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::core::BOOL {
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowThreadProcessId, PostMessageW, WM_CLOSE,
+    };
+
+    let context = &mut *(lparam.0 as *mut CloseWindowContext);
+    let mut window_pid = 0u32;
+    GetWindowThreadProcessId(hwnd, Some(&mut window_pid));
+    if window_pid == context.pid && PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)).is_ok()
+    {
+        context.requests_sent += 1;
+    }
+    BOOL(1)
+}
+
+#[cfg(target_os = "windows")]
+fn request_process_close(pid: u32) -> anyhow::Result<u32> {
+    use windows::Win32::Foundation::LPARAM;
+    use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
+
+    let mut context = CloseWindowContext {
+        pid,
+        requests_sent: 0,
+    };
+    unsafe {
+        EnumWindows(
+            Some(close_process_window),
+            LPARAM((&mut context as *mut CloseWindowContext) as isize),
+        )?;
+    }
+    Ok(context.requests_sent)
+}
+
+fn process_name_matches(process_name: &str, executable_name: &str) -> bool {
+    let requested = process_name.strip_suffix(".exe").unwrap_or(process_name);
+    let executable = executable_name
+        .strip_suffix(".exe")
+        .unwrap_or(executable_name);
+    requested.eq_ignore_ascii_case(executable)
+}
+
+/// Ask matching GUI processes to exit normally, then force-terminate only
+/// processes that do not exit before the grace period expires.
 #[cfg(target_os = "windows")]
 pub fn kill_process_by_name(process_name: &str) -> anyhow::Result<u32> {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{
+        OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+    };
+
+    const GRACEFUL_EXIT_TIMEOUT_MS: u32 = 15_000;
+    const FORCED_EXIT_TIMEOUT_MS: u32 = 5_000;
 
     let processes = get_process_list_by_name(process_name)?;
     let mut killed_count = 0u32;
 
-    for process in processes {
+    for process in processes
+        .into_iter()
+        .filter(|process| process_name_matches(process_name, &process.name))
+    {
         unsafe {
-            if let Ok(h_process) = OpenProcess(PROCESS_TERMINATE, false, process.pid) {
+            if let Ok(h_process) =
+                OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, false, process.pid)
+            {
                 if !h_process.is_invalid() {
+                    let close_requested = request_process_close(process.pid).unwrap_or(0) > 0;
+                    if close_requested
+                        && WaitForSingleObject(h_process, GRACEFUL_EXIT_TIMEOUT_MS) == WAIT_OBJECT_0
+                    {
+                        killed_count += 1;
+                        let _ = CloseHandle(h_process);
+                        continue;
+                    }
                     if TerminateProcess(h_process, 0).is_ok() {
+                        let _ = WaitForSingleObject(h_process, FORCED_EXIT_TIMEOUT_MS);
                         killed_count += 1;
                     }
                     let _ = CloseHandle(h_process);
@@ -754,6 +824,185 @@ pub fn run_as_admin(program: &str, args: &str) -> anyhow::Result<()> {
 #[cfg(not(target_os = "windows"))]
 pub fn run_as_admin(program: &str, args: &str) -> anyhow::Result<()> {
     println!("run_as_admin (unix): {} {}", program, args);
+    Ok(())
+}
+
+fn quote_windows_argument(argument: &str) -> String {
+    if !argument.is_empty()
+        && !argument
+            .chars()
+            .any(|character| character.is_whitespace() || character == '"')
+    {
+        return argument.to_string();
+    }
+
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0usize;
+    for character in argument.chars() {
+        if character == '\\' {
+            backslashes += 1;
+            continue;
+        }
+        if character == '"' {
+            quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
+            quoted.push('"');
+        } else {
+            quoted.push_str(&"\\".repeat(backslashes));
+            quoted.push(character);
+        }
+        backslashes = 0;
+    }
+    quoted.push_str(&"\\".repeat(backslashes * 2));
+    quoted.push('"');
+    quoted
+}
+
+/// Run a program with admin privileges, wait for it to exit, and return its exit code.
+#[cfg(target_os = "windows")]
+pub fn run_as_admin_and_wait(
+    program: &str,
+    args: Vec<String>,
+    timeout_ms: u32,
+) -> anyhow::Result<u32> {
+    use std::mem::size_of;
+    use std::path::Path;
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject};
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let operation = HSTRING::from("runas");
+    let file = HSTRING::from(program);
+    let parameters = HSTRING::from(
+        args.iter()
+            .map(|argument| quote_windows_argument(argument))
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    let working_directory = Path::new(program)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| HSTRING::from(path.to_string_lossy().as_ref()));
+
+    unsafe {
+        let mut execute_info = SHELLEXECUTEINFOW {
+            cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOCLOSEPROCESS,
+            lpVerb: PCWSTR(operation.as_ptr()),
+            lpFile: PCWSTR(file.as_ptr()),
+            lpParameters: PCWSTR(parameters.as_ptr()),
+            lpDirectory: working_directory
+                .as_ref()
+                .map_or(PCWSTR::null(), |directory| PCWSTR(directory.as_ptr())),
+            nShow: SW_SHOWNORMAL.0,
+            ..Default::default()
+        };
+        ShellExecuteExW(&mut execute_info)?;
+        let process = execute_info.hProcess;
+        if process.is_invalid() {
+            return Err(anyhow::anyhow!(
+                "ShellExecuteExW succeeded without returning a process handle"
+            ));
+        }
+
+        let result = match WaitForSingleObject(process, timeout_ms) {
+            WAIT_OBJECT_0 => {
+                let mut exit_code = 0u32;
+                match GetExitCodeProcess(process, &mut exit_code) {
+                    Ok(()) => Ok(exit_code),
+                    Err(error) => Err(error.into()),
+                }
+            }
+            WAIT_TIMEOUT => Err(anyhow::anyhow!(
+                "Elevated process did not exit within {} ms",
+                timeout_ms
+            )),
+            wait_result => Err(anyhow::anyhow!(
+                "WaitForSingleObject failed with result {}",
+                wait_result.0
+            )),
+        };
+        let _ = CloseHandle(process);
+        result
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn run_as_admin_and_wait(
+    program: &str,
+    args: Vec<String>,
+    _timeout_ms: u32,
+) -> anyhow::Result<u32> {
+    use std::process::Command;
+
+    let status = Command::new(program).args(args).status()?;
+    status
+        .code()
+        .map(|code| code as u32)
+        .ok_or_else(|| anyhow::anyhow!("Process exited without an exit code"))
+}
+
+/// Write a DWORD value below HKEY_CURRENT_USER, creating the key if necessary.
+#[cfg(target_os = "windows")]
+pub fn set_current_user_registry_dword(
+    key_path: &str,
+    value_name: &str,
+    value: u32,
+) -> anyhow::Result<()> {
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_DWORD,
+        REG_OPTION_NON_VOLATILE,
+    };
+
+    let key_path = HSTRING::from(key_path);
+    let value_name = HSTRING::from(value_name);
+    unsafe {
+        let mut key = std::mem::zeroed();
+        let create_result = RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(key_path.as_ptr()),
+            Some(0),
+            PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            None,
+            &mut key,
+            None,
+        );
+        if create_result.is_err() {
+            return Err(anyhow::anyhow!(
+                "Failed to create or open HKCU registry key: {:?}",
+                create_result
+            ));
+        }
+
+        let bytes = value.to_le_bytes();
+        let set_result = RegSetValueExW(
+            key,
+            PCWSTR(value_name.as_ptr()),
+            Some(0),
+            REG_DWORD,
+            Some(&bytes),
+        );
+        let _ = RegCloseKey(key);
+        if set_result.is_err() {
+            return Err(anyhow::anyhow!(
+                "Failed to set HKCU registry value: {:?}",
+                set_result
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn set_current_user_registry_dword(
+    _key_path: &str,
+    _value_name: &str,
+    _value: u32,
+) -> anyhow::Result<()> {
     Ok(())
 }
 
@@ -967,4 +1216,34 @@ pub fn set_clipboard_image(image_data: Vec<u8>) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{process_name_matches, quote_windows_argument};
+
+    #[test]
+    fn process_name_match_is_exact_and_ignores_exe_suffix() {
+        assert!(process_name_matches("StarCitizen", "StarCitizen.exe"));
+        assert!(process_name_matches("starcitizen.exe", "StarCitizen.exe"));
+        assert!(!process_name_matches(
+            "StarCitizen",
+            "StarCitizen_Launcher.exe"
+        ));
+    }
+
+    #[test]
+    fn windows_arguments_are_quoted_for_shell_execute() {
+        assert_eq!(quote_windows_argument("install"), "install");
+        assert_eq!(quote_windows_argument(""), "\"\"");
+        assert_eq!(quote_windows_argument("product id"), "\"product id\"");
+        assert_eq!(
+            quote_windows_argument(r#"value\with\"quote"#),
+            r#""value\with\\\"quote""#
+        );
+        assert_eq!(
+            quote_windows_argument(r#"trailing slash\"#),
+            r#""trailing slash\\""#
+        );
+    }
 }

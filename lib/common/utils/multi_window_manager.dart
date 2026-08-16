@@ -111,9 +111,8 @@ class MultiWindowManager {
         throw Exception('Unknown window type: $windowType');
     }
 
-    await Window.initialize();
-
     if (Platform.isWindows && windowAppState.windowsVersion >= 10) {
+      await Window.initialize();
       await Window.setEffect(effect: WindowEffect.acrylic);
     }
 
@@ -136,6 +135,7 @@ class MultiWindowManager {
           home: windowWidget,
           theme: FluentThemeData(
             brightness: Brightness.dark,
+            visualDensity: const VisualDensity(vertical: 1),
             fontFamily: "SourceHanSansCN-Regular",
             navigationPaneTheme: NavigationPaneThemeData(backgroundColor: backgroundColor),
             menuColor: HexColor(windowAppState.menuColor),

@@ -42,14 +42,14 @@ final class HomeDownloaderUIModelProvider
 }
 
 String _$homeDownloaderUIModelHash() =>
-    r'b230746a782b511dd58b0b46def7845c01412762';
+    r'007b61667095855c4761e724cf749c7d7dff39f5';
 
 abstract class _$HomeDownloaderUIModel
     extends $Notifier<HomeDownloaderUIState> {
   HomeDownloaderUIState build();
   @$mustCallSuper
   @override
-  void runBuild() {
+  WhenComplete runBuild() {
     final ref = this.ref as $Ref<HomeDownloaderUIState, HomeDownloaderUIState>;
     final element =
         ref.element
@@ -59,6 +59,6 @@ abstract class _$HomeDownloaderUIModel
               Object?,
               Object?
             >;
-    element.handleCreate(ref, build);
+    return element.handleCreate(ref, build);
   }
 }

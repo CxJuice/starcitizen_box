@@ -41,13 +41,13 @@ final class ToolsUIModelProvider
   }
 }
 
-String _$toolsUIModelHash() => r'4a05043b70e95402aba1ee9be8f47be1e0a7f287';
+String _$toolsUIModelHash() => r'de2a6550f2fad73c112a91528b514e81145dae31';
 
 abstract class _$ToolsUIModel extends $Notifier<ToolsUIState> {
   ToolsUIState build();
   @$mustCallSuper
   @override
-  void runBuild() {
+  WhenComplete runBuild() {
     final ref = this.ref as $Ref<ToolsUIState, ToolsUIState>;
     final element =
         ref.element
@@ -57,6 +57,6 @@ abstract class _$ToolsUIModel extends $Notifier<ToolsUIState> {
               Object?,
               Object?
             >;
-    element.handleCreate(ref, build);
+    return element.handleCreate(ref, build);
   }
 }

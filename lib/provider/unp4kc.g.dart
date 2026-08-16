@@ -41,13 +41,13 @@ final class Unp4kCModelProvider
   }
 }
 
-String _$unp4kCModelHash() => r'277f460ff30b489f1e1a8cba2ae583a768c384f8';
+String _$unp4kCModelHash() => r'4506aca6bb6179d6397058e9d7c0f9dc11545c4d';
 
 abstract class _$Unp4kCModel extends $Notifier<Unp4kcState> {
   Unp4kcState build();
   @$mustCallSuper
   @override
-  void runBuild() {
+  WhenComplete runBuild() {
     final ref = this.ref as $Ref<Unp4kcState, Unp4kcState>;
     final element =
         ref.element
@@ -57,6 +57,6 @@ abstract class _$Unp4kCModel extends $Notifier<Unp4kcState> {
               Object?,
               Object?
             >;
-    element.handleCreate(ref, build);
+    return element.handleCreate(ref, build);
   }
 }

@@ -51,6 +51,8 @@ extension AdvancedLocalizationUIStateEx on AdvancedLocalizationUIState {
     AppAdvancedLocalizationClassKeysDataMode.unLocalization:
         S.current.home_localization_advanced_action_mod_change_un_localization,
     AppAdvancedLocalizationClassKeysDataMode.mixed: S.current.home_localization_advanced_action_mod_change_mixed,
+    AppAdvancedLocalizationClassKeysDataMode.mixedEnglishFront:
+        S.current.home_localization_advanced_action_mod_change_mixed_english_front,
     AppAdvancedLocalizationClassKeysDataMode.mixedNewline:
         S.current.home_localization_advanced_action_mod_change_mixed_newline,
   };
@@ -206,7 +208,7 @@ class AdvancedLocalizationUIModel extends _$AdvancedLocalizationUIModel {
       final apiLocalizationData = localizationUIState.apiLocalizationData?.values.firstOrNull;
       if (apiLocalizationData == null) return ("", "");
       final file = File(
-        "${localizationUIModel.getDownloadDir().absolute.path}\\${apiLocalizationData.versionName}.sclang",
+        "${localizationUIModel.getDownloadDir().absolute.path}\\${apiLocalizationData.versionName}.sclang".platformPath,
       );
       if (!await file.exists()) {
         await localizationUIModel.downloadLocalizationFile(file, apiLocalizationData);
@@ -221,7 +223,7 @@ class AdvancedLocalizationUIModel extends _$AdvancedLocalizationUIModel {
   Future<String> readEnglishInI(String gameDir) async {
     try {
       var data = await Unp4kCModel.extractP4kFileToMemory(
-        "$gameDir\\Data.p4k",
+        "$gameDir\\Data.p4k".platformPath,
         "Data\\Localization\\english\\global.ini",
       );
       // remove bom
@@ -264,6 +266,13 @@ class AdvancedLocalizationUIModel extends _$AdvancedLocalizationUIModel {
           break;
         case AppAdvancedLocalizationClassKeysDataMode.mixed:
           newValuesMap[kv.key] = "${serverIniMap[kv.key]} [${p4kIniMap[kv.key]}]";
+          break;
+        case AppAdvancedLocalizationClassKeysDataMode.mixedEnglishFront:
+          final englishValue = p4kIniMap[kv.key];
+          final localizedValue = serverIniMap[kv.key] ?? "";
+          newValuesMap[kv.key] = englishValue == null || englishValue.isEmpty
+              ? localizedValue
+              : "$englishValue [$localizedValue]";
           break;
         case AppAdvancedLocalizationClassKeysDataMode.mixedNewline:
           newValuesMap[kv.key] = "${serverIniMap[kv.key]}\\n${p4kIniMap[kv.key]}";
